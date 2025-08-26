@@ -10,6 +10,18 @@ import numpy as np
 import time
 from dms.inference_timer import InferenceTimeLogger
 
+# IOTCONNECT Demo Modification
+# pass an Ethos-U delegate timeout and options into every DMS model that uses the NPU
+def _make_ethosu_delegate_path(delegate_path, tflite):
+    import os
+    opts = {
+        "device_name": "/dev/ethosu0",
+        "cache_file_path": ".",
+        "timeout": int(os.getenv("ETHOSU_TIMEOUT_NS", "5000000000")),
+        "enable_cycle_counter": 0,
+        "enable_profiling": 0,
+    }
+    return tflite.load_delegate(delegate_path, options=opts)
 
 
 class EyeMesher:
@@ -26,7 +38,9 @@ class EyeMesher:
             import tensorflow.lite as tflite
         
         if(delegate_path):
-            ext_delegate = [tflite.load_delegate(delegate_path)]
+            # IOTCONNECT Demo Modification
+            # pass an Ethos-U delegate timeout and options into every DMS model that uses the NPU
+            ext_delegate = [_make_ethosu_delegate_path(delegate_path, tflite) if ('ethosu' in str(delegate_path)) else tflite.load_delegate(delegate_path)]
             self.interpreter = tflite.Interpreter(model_path=model_path, experimental_delegates=ext_delegate)
         else:
             self.interpreter = tflite.Interpreter(model_path=model_path)

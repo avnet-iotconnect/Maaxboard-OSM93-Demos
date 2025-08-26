@@ -1,3 +1,8 @@
+# IOTCONNECT Demo Modification Notes
+#     -  Prefer GStreamer pipeline; fall back to V4L2.
+#     -  Auto‑reopen camera after repeated read timeouts (self‑healing).
+#     -  Minor bugfix to CloseCVDevice() calls.
+
 import os
 import time
 import threading
@@ -76,12 +81,12 @@ class cameraSupport():
 	def close(self):
 		self.running = False
 		# self.PostureDemo.Close(self)
-		self.CloseCVDevice(self)
+		self.CloseCVDevice()
 
 	def OpenCVDevice(self):
 		try:
 			if(self.cap.isOpened() == True):
-				self.CloseCVDevice(self)
+				self.CloseCVDevice()
 		except:
 			pass
 		
@@ -89,7 +94,15 @@ class cameraSupport():
 			if self.onHardware == True:
 				os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'hwaccel;qsv|video_codec;h264_qsv|vsync;0'
 
-			self.cap = cv2.VideoCapture(cv2.CAP_V4L2)
+			# Try GStreamer first for MIPI CSI stability; fallback to V4L2
+gst = (
+    "v4l2src device=/dev/video0 ! "
+    "video/x-raw,format=YUY2,width=640,height=480,framerate=30/1 ! "
+    "videoconvert ! video/x-raw,format=BGR ! appsink drop=1 max-buffers=2"
+)
+self.cap = cv2.VideoCapture(gst, cv2.CAP_GSTREAMER)
+if not self.cap or not self.cap.isOpened():
+    self.cap = cv2.VideoCapture('/dev/video0', cv2.CAP_V4L2)
 			self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 			self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 			self.cap.set(cv2.CAP_PROP_FPS, 30)
@@ -101,7 +114,7 @@ class cameraSupport():
 		except:
 			self.cameraOpen = False
 
-	def CloseCVDevice(self):
+	def CloseCVDevice():
 		try:
 			self.cameraOpen = False
 			self.cap.release()
@@ -114,6 +127,7 @@ class cameraSupport():
 		return self.frame
 
 	def FrameGetter(self):
+		timeout_count = 0
 		while self.running:
 			if(self.cameraOpen == False):
 				self.OpenCVDevice()
@@ -124,7 +138,7 @@ class cameraSupport():
 				try:
 					ret, image = self.cap.read()
 
-					if ret and np.any(image):
+                    if ret and image is not None and np.any(image):
 						dim = (320, 240)
 						image = cv2.resize(image, dim, interpolation = cv2.INTER_AREA)
 

@@ -7,6 +7,7 @@ SPDX-License-Identifier: BSD-3-Clause
 This script define class of smoking/calling detection used in DMS demo
 """
 import time
+import os
 import numpy as np
 import tflite_runtime.interpreter as tflite
 import cv2
@@ -17,6 +18,18 @@ ANCHORS = np.array(ANCHORS_TINY)
 ANCHORS.reshape(2, 3, 2)
 NUM_CLASS = 2
 XYSCALE = [1.05, 1.05]
+
+# IOTCONNECT Demo Modification
+# pass an Ethos-U delegate timeout and options into every DMS model that uses the NPU
+def _make_ethosu_delegate_fixed(tflite):
+    opts = {
+        "device_name": "/dev/ethosu0",
+        "cache_file_path": ".",
+        "timeout": int(os.getenv("ETHOSU_TIMEOUT_NS", "5000000000")),
+        "enable_cycle_counter": 0,
+        "enable_profiling": 0,
+    }
+    return tflite.load_delegate("/usr/lib/libethosu_delegate.so", options=opts)
 
 
 class SmokingCallingDetector:
@@ -39,7 +52,9 @@ class SmokingCallingDetector:
             if platform == "i.MX8MP":
                 delegate = tflite.load_delegate("/usr/lib/libvx_delegate.so")
             elif platform == "i.MX93":
-                delegate = tflite.load_delegate("/usr/lib/libethosu_delegate.so")
+                # IOTCONNECT Demo Modification
+                # pass an Ethos-U delegate timeout and options into every DMS model that uses the NPU
+                delegate = _make_ethosu_delegate_fixed(tflite)
             else:
                 print("Platform not supported!")
                 return

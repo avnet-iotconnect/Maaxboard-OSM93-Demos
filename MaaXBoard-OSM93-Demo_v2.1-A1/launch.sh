@@ -1,4 +1,7 @@
 #!/bin/sh
+export ETHOSU_TIMEOUT_NS=${ETHOSU_TIMEOUT_NS:-5000000000}
+pkill -f 'python.*(webui\.py|app\.py|MaaXBoard-OSM93-Demo)' 2>/dev/null || true
+sleep 0.5
 export XDG_RUNTIME_DIR=/run
 
 if test -z "$XDG_RUNTIME_DIR"; then

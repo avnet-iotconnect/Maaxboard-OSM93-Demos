@@ -4,8 +4,14 @@
 
 from __future__ import annotations
 import os, sys, time, threading, subprocess, urllib.request, math
-from typing import Optional, Callable, Dict
-from dataclasses import dataclass, field
+from typing import Optional, Callable
+from dataclasses import dataclass
+
+# OS-level lock to ensure single MQTT owner per device
+try:
+    import fcntl  # POSIX only
+except Exception:  # pragma: no cover
+    fcntl = None  # type: ignore
 
 # Graceful import: Avnet IOTCONNECT Lite SDK
 IOTC_AVAILABLE = True
@@ -32,6 +38,11 @@ except Exception:
 
 _client: Optional[Client] = None
 _connected_lock = threading.Lock()
+_last_disconnect_ts = 0.0
+_reconnect_backoff_sec = float(os.getenv("IOTC_RECONNECT_BACKOFF_SEC", "5"))
+
+_proc_lock_fd: Optional[int] = None
+_proc_lock_path: str = os.getenv("IOTC_PROCESS_LOCK_PATH", "/var/run/iotc_device.lock")
 
 # App-supplied callbacks for commands
 _fitness_reset_cb: Optional[Callable[[], None]] = None
@@ -41,9 +52,28 @@ _can_brake_cb: Optional[Callable[[float], None]] = None
 def _log(msg: str):
     print(f"[IOTC] {msg}", flush=True)
 
+def _acquire_process_lock() -> bool:
+    """Try to take an exclusive process-wide lock so only one process connects."""
+    global _proc_lock_fd
+    if fcntl is None:
+        _log("fcntl unavailable; skipping process lock (single-process not enforced)")
+        return True
+    if _proc_lock_fd is not None:
+        return True
+    try:
+        # Ensure directory exists
+        d = os.path.dirname(_proc_lock_path) or "/var/run"
+        os.makedirs(d, exist_ok=True)
+        _proc_lock_fd = os.open(_proc_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.lockf(_proc_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _log(f"Process lock acquired at {_proc_lock_path} (PID={os.getpid()})")
+        return True
+    except Exception as e:
+        _log(f"Another process holds IOTCONNECT lock at {_proc_lock_path}; skipping connect. ({e})")
+        return False
+
 def _extract_and_run_tar_gz(targz_filename: str) -> bool:
     try:
-        # Use system tar to preserve permissions and overwrite
         subprocess.run(("tar", "-xzvf", targz_filename, "--overwrite"), check=True)
         script_file_path = os.path.join(os.getcwd(), "install.sh")
         if os.path.isfile(script_file_path):
@@ -66,7 +96,6 @@ def _on_command(msg: C2dCommand):
     args = list(getattr(msg, "command_args", []) or [])
     _log(f"Command: {name} args={args} ack_id={getattr(msg,'ack_id',None)}")
 
-    # OTA-lite: download tarball and restart
     if name == "file-download":
         if len(args) != 1:
             _send_cmd_ack(msg, C2dAck.CMD_FAILED, "Expected 1 argument: URL")
@@ -87,7 +116,6 @@ def _on_command(msg: C2dCommand):
             _send_cmd_ack(msg, C2dAck.CMD_FAILED, f"Download error: {e}")
         return
 
-    # Fitness: reset reps
     if name == "ft-reset-reps":
         if _fitness_reset_cb is None:
             _send_cmd_ack(msg, C2dAck.CMD_FAILED, "No reset callback registered")
@@ -99,7 +127,6 @@ def _on_command(msg: C2dCommand):
             _send_cmd_ack(msg, C2dAck.CMD_FAILED, f"Reset error: {e}")
         return
 
-    # CAN: accelerate/brake for seconds
     if name in ("can-accelerate", "can-brake"):
         if len(args) != 1:
             _send_cmd_ack(msg, C2dAck.CMD_FAILED, "Expected 1 argument: seconds")
@@ -145,12 +172,13 @@ def _on_ota(msg: C2dOta):
             _send_ota_ack(msg, C2dAck.OTA_DOWNLOAD_DONE)
             _log("OTA applied; restarting")
             sys.stdout.flush()
-            # FIX: use sys.argv[0] to restart the same entrypoint
             os.execv(sys.executable, [sys.executable, sys.argv[0]] + sys.argv[1:])
     except Exception as e:
         _log(f"OTA error: {e}")
 
 def _on_disconnect(reason: str, disconnected_from_server: bool):
+    global _last_disconnect_ts
+    _last_disconnect_ts = time.time()
     _log(f"Disconnected{' from server' if disconnected_from_server else ''}. reason={reason}")
 
 def _send_cmd_ack(msg, status, text):
@@ -167,30 +195,44 @@ def _send_ota_ack(msg, status):
     except Exception as e:
         _log(f"OTA ACK error: {e}")
 
-def ensure_connected(retries: int = 100, delay_s: float = 0.5):
-    """Ensure IOTCONNECT is connected; safe to call many times."""
+def ensure_connected(retries: int = 60, delay_s: float = 0.5):
+    """Ensure IOTCONNECT is connected; safe to call many times; race-proof."""
     global _client
     if not IOTC_AVAILABLE:
         _log("SDK not available: install Avnet IOTCONNECT Lite SDK")
         return
-    if _client is None:
-        try:
-            cfg = DeviceConfig.from_iotc_device_config_json_file(
-                device_config_json_path="iotcDeviceConfig.json",
-                device_cert_path="device-cert.pem",
-                device_pkey_path="device-pkey.pem"
-            )
-            _client = Client(config=cfg, callbacks=Callbacks(
-                ota_cb=_on_ota, command_cb=_on_command, disconnected_cb=_on_disconnect
-            ))
-        except DeviceConfigError as dce:
-            _log(f"DeviceConfig error: {dce}")
-            raise
-    if getattr(_client, "is_connected", lambda: False)():
+
+    # Backoff after disconnects to avoid thrash
+    if _last_disconnect_ts and (time.time() - _last_disconnect_ts) < _reconnect_backoff_sec:
         return
+
     with _connected_lock:
+        # Acquire a cross-process lock before creating/connecting
+        if _client is None:
+            if not _acquire_process_lock():
+                return
+            try:
+                cfg_dir = os.getenv("IOTC_CONFIG_DIR", os.getcwd())
+                device_config_json_path = os.path.join(cfg_dir, "iotcDeviceConfig.json")
+                device_cert_path = os.path.join(cfg_dir, "device-cert.pem")
+                device_pkey_path = os.path.join(cfg_dir, "device-pkey.pem")
+
+                cfg = DeviceConfig.from_iotc_device_config_json_file(
+                    device_config_json_path=device_config_json_path,
+                    device_cert_path=device_cert_path,
+                    device_pkey_path=device_pkey_path
+                )
+                _client = Client(config=cfg, callbacks=Callbacks(
+                    ota_cb=_on_ota, command_cb=_on_command, disconnected_cb=_on_disconnect
+                ))
+                _log(f"PID={os.getpid()} IOTCONNECT client created")
+            except DeviceConfigError as dce:
+                _log(f"DeviceConfig error: {dce}")
+                raise
+
         if getattr(_client, "is_connected", lambda: False)():
             return
+
         _log("(re)connecting...")
         _client.connect()
         for _ in range(retries):
@@ -202,22 +244,40 @@ def ensure_connected(retries: int = 100, delay_s: float = 0.5):
 
 def _send_telemetry(payload: dict):
     if not IOTC_AVAILABLE:
+        _log("SDK not available; dropping telemetry")
         return
     ensure_connected()
+    base = {"sdk_version": SDK_VERSION}
+    if payload:
+        base.update(payload)
+
+    # 1) Try plain-dict first
     try:
-        base = {"sdk_version": SDK_VERSION}
-        base.update(payload or {})
-        _client.send_telemetry(base)  # type: ignore[attr-defined]
+        _client.send_telemetry(base)
+        _log(f"TX ok keys={list(payload.keys())[:8]}")
+        return
+    except TypeError:
+        pass
     except Exception as e:
-        _log(f"telemetry error: {e}")
+        _log(f"telemetry error (plain): {e}")
+
+    # 2) Fallback: wrapped envelope shape
+    try:
+        wrapped = {"d": [{"d": base}]}
+        _client.send_telemetry(wrapped)
+        _log(f"TX ok (wrapped) keys={list(payload.keys())[:8]}")
+    except Exception as e:
+        _log(f"telemetry error (wrapped): {e}")
 
 # Public API
 def init_webui_iotc():
     ensure_connected()
-    if not IOTC_AVAILABLE or _client is None or not getattr(_client, "is_connected", lambda: False)():
-        _log("IOTCONNECT SDK not available or client not connected")
-        return
     _log("IOTCONNECT ready")
+    try:
+        _send_telemetry({"demo": "BOOT", "boot_ts": int(time.time())})
+        _log("[BOOT] Sent initial heartbeat")
+    except Exception as e:
+        _log(f"[BOOT] heartbeat send failed: {e}")
 
 def iotc_is_connected() -> bool:
     try:
@@ -275,10 +335,7 @@ class _CanState:
 _can_state = _CanState()
 
 def update_can_values(speed_kph: float, trip_km: Optional[float] = None):
-    """
-    Send CAN telemetry; if trip_km is provided, send that exact value.
-    Otherwise integrate trip internally based on time and speed.
-    """
+    """Send CAN telemetry; if trip_km is provided, send that exact value. Otherwise integrate."""
     now = time.time()
     try:
         s = float(speed_kph)
@@ -301,6 +358,5 @@ def update_can_values(speed_kph: float, trip_km: Optional[float] = None):
     }
     _send_telemetry(payload)
 
-# Backward-compat convenience
 def update_can(speed_kph: float):
     update_can_values(speed_kph, None)

@@ -5,7 +5,7 @@ A module for configuring the CAN0 network interface on MaaXBoard systems.
 Functions:
     setup_can0(): Configures and activates the CAN0 interface.
     shutdown_can0(): Deactivates the CAN0 interface and cleans up resources.
-    
+
 Attributes:
     DEFAULT_BITRATE (int): The default bitrate for the CAN0 interface.
 
@@ -27,6 +27,6 @@ def shutdown_can0():
     """
     Shuts down the CAN0 interface.
     """
-    
+
     os.system('sudo ip link set can0 down')
     print("CAN0 interface has been deactivated.")

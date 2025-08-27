@@ -34,7 +34,7 @@ class PoseDetector:
     def __init__(self):
         self.mpPose = mp.solutions.pose
         self.pose = self.mpPose.Pose()
-    
+
     def detect_pose(self, frame):
         # Convert color BGR to RGB for inferencing
         imgRGB = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -62,7 +62,7 @@ class Exercise:
         self.rom_range = ROM_RANGE
         self.angle_range = angle_range
         self.status = None
-    
+
     def check_keypoint_visibility(self, frame, kps):
         # keypoints from exercise, etc 11, 13, 15
         p1, p2, p3 = self.keypoints[0],self.keypoints[1],self.keypoints[2]
@@ -81,18 +81,18 @@ class Exercise:
             else:
                 self.status = "Good Landmark Detection"
                 return True
-    
+
     def draw_connections(self, img, p1, p2, p3):
         cv2.line(img, p1, p2, (255,255,255), 2)
         cv2.line(img, p2, p3, (255,255,255), 2)
-        pass 
+        pass
 
     def calculate_angle(self, img, kps, draw=True):
         # print(self.keypoints)
         # print(kps)
         p1, p2, p3 = self.keypoints[0],self.keypoints[1],self.keypoints[2]
 
-        # grab x,y for each keypoint 
+        # grab x,y for each keypoint
         x1, y1 = kps[p1][1:3]
         x2, y2 = kps[p2][1:3]
         x3, y3 = kps[p3][1:3]
@@ -116,7 +116,7 @@ class Exercise:
             cv2.circle(img, (x3,y3), 15, (0,0,255), 2)
             cv2.circle(img, (x3,y3), 5, (0,0,255), cv2.FILLED)
             # cv2.putText(img, str(self.angle), (x2-50, y2+50), cv2.FONT_HERSHEY_PLAIN, 2, (255,0,0), 2)
-            
+
             self.draw_connections(img, (x1,y1),(x2,y2),(x3,y3))
 
     def calculate_rom(self):
@@ -146,7 +146,7 @@ class Exercise:
         #     else:
         #         # print("done w/ ", self.name)
         #         pass
-    
+
     def draw_progress_bar(self, image, x, y, width, height):
         cv2.rectangle(image, (1100, 100), (1175, 650), (0, 255, 0), 3)
 
@@ -163,7 +163,7 @@ class FitnessAI:
             # Exercise("Side Lateral Raise", SIDE_LATERAL_RAISE_POINTS, SIDE_LATERAL_RAISE_RANGE)
         ]
         self.current_exercise_index = 0
-    
+
     def run_exercise_actions(self, exercise, frame, keypoint_list):
         # print("exercise name: ", exercise.name)
         # check all keypoints have good confidence
@@ -181,17 +181,17 @@ class FitnessAI:
             self.run_exercise_actions(exercise, frame, keypoint_list)
 
             # cv2.imshow('frame', frame)
-        
+
         # if exercise.set_count == 0 and exercise.rep_count == 0:
         #     # Move to the next exercise
         #     self.current_exercise_index = (self.current_exercise_index + 1) % len(self.exercises)
         # if self.all_exercises_completed():
         #     self.reset()
-        
+
         # time.sleep(0.5)
         # cv2.imshow("frame", frame)
         return frame, exercise.rom, exercise.set_count, exercise.rep_count, exercise.name, exercise.status
-    
+
     def reset(self):
         # Reset all exercise states
         for exercise in self.exercises:
@@ -200,7 +200,7 @@ class FitnessAI:
             exercise.count = 0
             exercise.direction = 0
         self.current_exercise_index = 0
-    
+
     def all_exercises_completed(self):
         # Check if all exercises are completed
         # print("all exercises completed")

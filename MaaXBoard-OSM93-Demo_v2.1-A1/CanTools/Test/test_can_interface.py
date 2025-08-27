@@ -19,14 +19,14 @@ class CarSimulator():
         self._start()
 
     def _start(self):
-        # Start the ELM simulator       
+        # Start the ELM simulator
         self.process = subprocess.Popen(['python3', '-m', 'elm', '-s', 'car', '-e', '-a', '230400'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
         # self.process = subprocess.Popen(['python3', '-m', 'elm', '-a', '230400'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
 
         pattern = re.compile(r'pseudo-tty port "(/dev/pts/\d+)"')
 
         # Wait for simulator to start
-        time.sleep(2)  
+        time.sleep(2)
         # Scan output text and search for pattern
         while True:
             line = self.process.stdout.readline()
@@ -49,13 +49,13 @@ class CarSimulator():
             self._stop()
 
     def _stop(self):
-        # Stop the emulator 
+        # Stop the emulator
         if self.process:
             self.process.terminate()
 
 class CanBusManager():
     """
-    Class to manage CAN bus communication. Create a bus, send, and receive messages. 
+    Class to manage CAN bus communication. Create a bus, send, and receive messages.
     """
     def __init__(self, can_channel='can0', can_interface='socketcan', can_baud=500000):
         self.serial_manager = None
@@ -69,7 +69,7 @@ class CanBusManager():
         self.notifier = can.Notifier(self.bus, [self.enqueue_message]) # setup a notifier object to handle incoming messages
         self.worker_thread = threading.Thread(target=self.process_can_message)
         self.worker_thread.start()
-        
+
 
     def set_serial_manager(self, serial_manager):
         self.serial_manager = serial_manager
@@ -127,7 +127,7 @@ class CanBusManager():
             try:
                 # print("Sending message: ", can.Message(arbitration_id=self.tx_arb_id, data=byte_array, is_extended_id=False))
                 self.bus.send(can.Message(arbitration_id=self.tx_arb_id, data=byte_array, is_extended_id=False), 1)
-                
+
             except:
                 print("Error sending")
 
@@ -160,7 +160,7 @@ class SerialManager():
                 data = self.ser.read_all()
                 # print("Received serial data: ", data)
                 self.data_queue.put(data)
-        
+
     def process_serial_data(self):
         while True:
             data = self.data_queue.get()
@@ -172,7 +172,7 @@ class SerialManager():
         match_data = list()
 
         # Convert bytes to a normal string
-        data = data_bytes.decode() 
+        data = data_bytes.decode()
         # print("Decoded Data: ", data)
 
         # Regex pattern to match ECU byte responses only
@@ -180,7 +180,7 @@ class SerialManager():
 
         # split messages by '\r', appending matched data groups to match_data
         messages = data.split('\r')
-        for msg in messages:    
+        for msg in messages:
             if msg.strip():
                 match = pattern.search(msg)
                 if match:
@@ -189,13 +189,13 @@ class SerialManager():
 
         # print("Matched data: ", match_data)
         return match_data
-    
+
     def close(self):
         self.ser.close()
         self.receiving_thread.join()
         self.processing_thread.join()
         print("Serial port closed and threads terminated.")
-    
+
 
 def start_can_applicaiton():
 

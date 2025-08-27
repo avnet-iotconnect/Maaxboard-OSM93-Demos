@@ -31,12 +31,12 @@ class EyeMesher:
     def __init__(self, model_path, delegate_path, run_on_hardware=False):
 
         self.inference_logger = InferenceTimeLogger()
-    
+
         if run_on_hardware:
             import tflite_runtime.interpreter as tflite
         else:
             import tensorflow.lite as tflite
-        
+
         if(delegate_path):
             # IOTCONNECT Demo Modification
             # pass an Ethos-U delegate timeout and options into every DMS model that uses the NPU

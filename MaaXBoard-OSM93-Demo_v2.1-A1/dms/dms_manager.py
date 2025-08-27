@@ -67,15 +67,15 @@ class DMSManager:
         model_selector = model_paths.NPU_MODELS if self.use_npu else model_paths.CPU_MODELS
         DELEGATE_PATH = "/usr/lib/libethosu_delegate.so" if self.use_npu else None
 
-        self.face_detector = FaceDetector(model_path = str(self.path_to_models + model_selector['DETECT_MODEL']), 
-                                          delegate_path = DELEGATE_PATH, 
+        self.face_detector = FaceDetector(model_path = str(self.path_to_models + model_selector['DETECT_MODEL']),
+                                          delegate_path = DELEGATE_PATH,
                                           img_size=self.target_dim,
                                           run_on_hardware=self.run_on_hardware)
-        
-        self.face_mesher = FaceMesher(model_path=str((self.path_to_models + model_selector['LANDMARK_MODEL'])), 
+
+        self.face_mesher = FaceMesher(model_path=str((self.path_to_models + model_selector['LANDMARK_MODEL'])),
                                       delegate_path = DELEGATE_PATH,
                                       run_on_hardware=self.run_on_hardware)
-        
+
         self.eye_mesher = EyeMesher(model_path=str((self.path_to_models + model_selector['EYE_MODEL'])),
                                     delegate_path = DELEGATE_PATH,
                                     run_on_hardware=self.run_on_hardware)
@@ -134,7 +134,7 @@ class DMSManager:
 
         except:
             print("error")
-        
+
         # face detection
         bboxes_decoded, landmarks, scores = self.face_detector.inference(padded)
 
@@ -172,13 +172,13 @@ class DMSManager:
 
             left_eye_landmarks, left_iris_landmarks = self.eye_mesher.inference(left_eye_img)
             right_eye_landmarks, right_iris_landmarks = self.eye_mesher.inference(right_eye_img)
-            
+
 
             # Adds boxes around the eyes
             # cv2.rectangle(image_show, left_box[0], left_box[1], color=(255, 0, 0), thickness=2)
             # cv2.rectangle(image_show, right_box[0], right_box[1], color=(255, 0, 0), thickness=2)
-            
-            
+
+
             left_eye_ratio = get_eye_ratio(left_eye_landmarks, image_show, left_box[0])
             right_eye_ratio = get_eye_ratio(right_eye_landmarks, image_show, right_box[0])
 
@@ -190,7 +190,7 @@ class DMSManager:
                 yawn = True
             else:
                 self.yawning_status = False
-                yawn = False    
+                yawn = False
 
             if left_eye_ratio < 0.25 and right_eye_ratio < 0.25:
                 self.eye_status = True
@@ -218,7 +218,7 @@ class DMSManager:
             else:
                 self.attention_status = "Forward"
                 attention = True
-        
+
         if not attention:
             self.safe_value = min(self.safe_value + DISTRACT_PENALTY, 100.00)
         if sleep:

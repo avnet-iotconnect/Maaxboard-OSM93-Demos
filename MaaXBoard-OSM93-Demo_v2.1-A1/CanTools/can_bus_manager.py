@@ -7,7 +7,7 @@ from CanTools.car_attributes_handler import CarAttributesHandler
 
 class CanBusManager():
     """
-    Class to manage CAN bus communication. Create a bus, send, and receive messages. 
+    Class to manage CAN bus communication. Create a bus, send, and receive messages.
     """
     def __init__(self, can_channel, can_interface, can_baud):
         self.serial_manager = None
@@ -59,7 +59,7 @@ class CanBusManager():
             elif msg.data == bytearray(b'\x02\x01\x11\x00\x00\x00\x00\x00'):
                 throttle_pos = self.update_throttle_position_bytearray(self.car_throttle_pos)
                 self.send_can_message(self.tx_arb_id, throttle_pos)
-                
+
             # INTAKE AIR TEMP (02 01 0F)
             elif msg.data == bytearray(b'\x02\x01\x0F\x00\x00\x00\x00\x00'):
                 intake_air_temp = self.generate_air_intake_temp_value_bytearray()
@@ -104,7 +104,7 @@ class CanBusManager():
         speed_response = bytearray(b'\x04\x41\x0D\x00\x00\x00\x00\x00')
         speed_response[3] = speed
         return speed_response
-    
+
     def update_rpm_in_bytearray(self, rpm):
         # print("speed response update: ", rpm)
         rpm_bytes = self.format_rpm_for_bytearray(rpm)
@@ -114,9 +114,9 @@ class CanBusManager():
         return rpm_response
 
     def update_throttle_position_bytearray(self, throttle):
-        A = int((throttle / 100) * 255) 
+        A = int((throttle / 100) * 255)
         throttle_position_response = bytearray(b'\x04\x41\x11\x00\x00\x00\x00\x00')
-        throttle_position_response[3] = A  
+        throttle_position_response[3] = A
         return throttle_position_response
 
     def format_rpm_for_bytearray(self, rpm):
@@ -126,7 +126,7 @@ class CanBusManager():
 
         RPM: returns 2 bytes of data A[7...0], B[7...0]
         Min Value: 0
-        Max Value: 16,383.75 
+        Max Value: 16,383.75
 
         Formula: RPM = (256 * A + B) / (4)
 
@@ -136,18 +136,18 @@ class CanBusManager():
         Returns:
         bytearray([A,B])
         """
-        rpm_value = rpm * 4 
+        rpm_value = rpm * 4
         A = rpm_value // 256
         B = rpm_value % 256
         A = int(A)
         B = int(B)
         return bytearray([A, B])
-    
+
     def generate_air_intake_temp_value_bytearray(self):
-        intake_air_temp_value = randrange(-40, 121) 
+        intake_air_temp_value = randrange(-40, 121)
         A = intake_air_temp_value + 40
         intake_air_temp_response = bytearray(b'\x04\x41\x0F\x00\x00\x00\x00\x00')
-        intake_air_temp_response[3] = A     
+        intake_air_temp_response[3] = A
         return intake_air_temp_response
 
     def generate_coolant_temp_value_bytearray(self):
@@ -156,7 +156,7 @@ class CanBusManager():
         coolant_response = bytearray(b'\x04\x41\x05\x00\x00\x00\x00\x00')
         coolant_response[3] = A
         return coolant_response
-    
+
     def generate_engine_load_percent_value_bytearray(self):
         engine_load_percent = randrange(0, 101)
         A = int((engine_load_percent/100) * 255 )
@@ -165,10 +165,10 @@ class CanBusManager():
         return engine_load_response
 
     def generate_intake_manifold_pressure_bytearray(self):
-        pressure_value = randrange(20, 100) 
+        pressure_value = randrange(20, 100)
         pressure_response = bytearray(b'\x04\x41\x0B\x00\x00\x00\x00\x00')
-        pressure_response[3] = pressure_value  
+        pressure_response[3] = pressure_value
         return pressure_response
-    
+
 
 

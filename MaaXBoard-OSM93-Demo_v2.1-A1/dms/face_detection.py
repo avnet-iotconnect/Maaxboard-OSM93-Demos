@@ -46,9 +46,9 @@ class FaceDetector:
                  run_on_hardware = False
                  ):
 
-    
+
         self.inference_logger = InferenceTimeLogger()
-        
+
         if run_on_hardware:
             import tflite_runtime.interpreter as tflite
         else:
@@ -119,7 +119,7 @@ class FaceDetector:
             scores = scores[keep_mask]
             # print("face bboxes/scores", bboxes_decoded, scores)
             return bboxes_decoded, landmarks, scores
-        else: 
+        else:
             return np.array([]), np.array([]), np.array([])
 
     def decode(self, scores, bboxes):
@@ -178,7 +178,7 @@ class FaceDetector:
         # get left and right eye
         left_eye = landmarks[1]
         right_eye = landmarks[0]
-        
+
         # computer angle
         dY = right_eye[1] - left_eye[1]
         dX = right_eye[0] - left_eye[0]

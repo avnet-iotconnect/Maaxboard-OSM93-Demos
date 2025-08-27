@@ -1,22 +1,10 @@
 """
-Main Application Entry Point.
-
-This module initializes and runs the main application components including CAN bus management,
-camera support, local window GUI, and a web server. It handles interactions between different
-modules and manages the application's state.
-
-Classes:
-    CanDemoManager: Manages CAN bus operations.
-    CameraSupport: Handles camera operations and frame processing.
-    LocalWindow: Manages the GUI elements and user interactions.
+webui.py — Main Application Entry Point with IOTCONNECT integration.
+Initializes CAN bus manager, camera, GUI, and a Microdot web server.
+Pushes telemetry for Fitness, DMS, and CAN to IOTCONNECT and handles cloud commands.
 """
 
-import os
-import sys
-import json
-import time
-import threading
-import numbers
+import os, sys, json, time, threading, numbers
 import cv2
 from netinfo import NETInfo
 from camera import cameraSupport
@@ -26,50 +14,36 @@ from CanTools.car_status import CarStatus
 from CanTools.can_main import CanDemoManager
 
 try:
-	import uasyncio as asyncio
+    import uasyncio as asyncio
 except ImportError:
-	import asyncio
+    import asyncio
 
 from microdot import Microdot, redirect, send_file
-
-from random import seed
-from random import randint
-
-# IoTConnect bridge
 from iotc_bridge import (
     init_webui_iotc, update_dms, update_fitness, update_can_values,
     register_fitness_reset, register_can_actions, iotc_is_connected
 )
 
-'''
-Options to run application on hardware or separate Linux PC.
-'''
+# ---------------- Options ----------------
 run_on_hardware = False
-
-if run_on_hardware == False:
-	HardwareSupport = False
-	RotateCameraY = False
-	RotateCameraX = False
-	EnableUSBPowerMonitor = False
+if not run_on_hardware:
+    HardwareSupport = False
+    RotateCameraY = False
+    RotateCameraX = False
+    EnableUSBPowerMonitor = False
 else:
-	HardwareSupport = True
-	RotateCameraY = False
-	RotateCameraX = True
-	EnableUSBPowerMonitor = True
+    HardwareSupport = True
+    RotateCameraY = False
+    RotateCameraX = True
+    EnableUSBPowerMonitor = True
 
-
-
-# Constants
+# Demo constants
 DEMO_FITNESS = 0
 DEMO_DMS = 1
 DEMO_CAN = 2
 
-
-# will sys.exit(-1) if other instance is running
+# Ensure single instance
 me = singleton.SingleInstance()
-
-
-seed(1)
 
 serialPortBusy = False
 ledStates = [0, 0, 0]
@@ -77,27 +51,26 @@ ledStates = [0, 0, 0]
 globalFrame = None
 globalCurrentDemo = 0
 
-# Setup Car simulator & can tools
+# CAN simulator & tools
 can_app_manager = CanDemoManager(selectedDemo=globalCurrentDemo)
 
 fileDir = os.path.dirname(os.path.realpath(__file__))
-
 def GetFileFullPath(s):
-	filePath = os.path.join(fileDir, s)
-	filePath = os.path.abspath(os.path.realpath(filePath))
-	return filePath
+    filePath = os.path.join(fileDir, s)
+    filePath = os.path.abspath(os.path.realpath(filePath))
+    return filePath
 
-# Telemetry throttle (4 seconds cadence)
+# Telemetry throttle
 _last_dms_ts = 0.0
 _last_fit_ts = 0.0
 _DMS_INTERVAL = 4.0
 _FIT_INTERVAL = 4.0
-_CAN_INTERVAL = 4.0   # CAN send cadence; CAN loop runs in background
+_CAN_INTERVAL = 4.0
 
 def _parse_latency_ms(value):
     try:
         if isinstance(value, str):
-            v = value.replace("MS","").replace("ms","").replace("mS","").replace(" ", "")
+            v = value.replace("MS","" ).replace("ms","" ).replace("mS","" ).replace(" ", "")
             return float(v)
         return float(value)
     except Exception:
@@ -136,25 +109,11 @@ def _infer_fitness_values(ret1, ret2, ret3, ret4):
         fps = None
     return exercise_name, reps, rom_deg, fps
 
+# ---------------- Frame callback ----------------
 def frameCallback(frame, demoNumber, ret1, ret2, ret3, ret4, ret5, ret6):
-	"""
-    Callback function for processing frames from the camera.
-
-    This function updates the global frame and triggers UI updates based on the current demo.
-
-    Parameters:
-        frame (np.array): The latest frame from the camera.
-        demoNumber (int): The identifier for the current demo.
-        ret1, ret2, ret3, ret4, ret5 (int): Demo-specific return values for UI updates.
-
-    Returns:
-        None
-    """
-	global globalFrame
-	global globalCurrentDemo
-
-	globalFrame = frame
-	window.updateFrame(frame)
+    global globalFrame, globalCurrentDemo, _last_dms_ts, _last_fit_ts
+    globalFrame = frame
+    window.updateFrame(frame)
 
     now = time.time()
 
@@ -162,6 +121,7 @@ def frameCallback(frame, demoNumber, ret1, ret2, ret3, ret4, ret5, ret6):
         window.UpdateFitnessUI(ret1, ret2, ret3, ret4)
         if (now - _last_fit_ts) >= _FIT_INTERVAL:
             exercise_name, reps, rom_deg, fps = _infer_fitness_values(ret1, ret2, ret3, ret4)
+            print(f"[FIT] TX reps={reps} rom={rom_deg} fps={fps}", flush=True)
             update_fitness(exercise_name, reps, rom_deg, fps)
             _last_fit_ts = now
 
@@ -173,70 +133,67 @@ def frameCallback(frame, demoNumber, ret1, ret2, ret3, ret4, ret5, ret6):
                 inference_target = "NPU" if getattr(camera, "enableNPU", False) else "CPU"
             except Exception:
                 inference_target = "CPU"
+            print(f"[DMS] TX att={ret1} yawn={ret2} eyes={ret3} ms={latency_ms}", flush=True)
             update_dms(
                 attention_label=str(ret1),
                 yawning=bool(ret2),
                 eye_closed=bool(ret3),
-                latency_ms=latency_ms,
+                latency_ms=float(latency_ms),
                 penalty_score=float(ret5) if ret5 is not None else 0.0,
                 phone_in_use=bool(ret6),
                 inference_target=inference_target,
                 model_name=None
             )
             _last_dms_ts = now
+
     else:
         # CAN demo selected: handled by background loop
         pass
 
+# ---------------- Screen / button handlers ----------------
 def screenClickCallback(event):
-	global globalCurrentDemo
+    global globalCurrentDemo
 
-	if event == "event_reset":
-		camera.ResetFitnessApp()
-		globalCurrentDemo = DEMO_FITNESS
+    if event == "event_reset":
+        camera.ResetFitnessApp()
+        globalCurrentDemo = DEMO_FITNESS
 
-	elif event == "page0":
-		globalCurrentDemo = DEMO_FITNESS
-		window.UpdateActiveDemo(globalCurrentDemo)
+    elif event == "page0":
+        globalCurrentDemo = DEMO_FITNESS
+        window.UpdateActiveDemo(globalCurrentDemo)
 
-	elif event == "page1":
-		globalCurrentDemo = DEMO_DMS
-		window.UpdateActiveDemo(globalCurrentDemo)
+    elif event == "page1":
+        globalCurrentDemo = DEMO_DMS
+        window.UpdateActiveDemo(globalCurrentDemo)
 
-elif event == "page2":
+    elif event == "page2":
         globalCurrentDemo = DEMO_CAN
         window.UpdateActiveDemo(globalCurrentDemo)
-        # immediate first CAN send so cloud shows data right away
         try:
             spd, dist = _read_display_can_values()
             update_can_values(spd if spd is not None else 0.0, dist)
         except Exception:
             pass
 
-	elif event == "toggle_DMS_Acceleration":
-		camera.ToggleDMSAcceleration()
-		window.ToggleNPUAccelerationLabel()
+    elif event == "toggle_DMS_Acceleration":
+        camera.ToggleDMSAcceleration()
+        window.ToggleNPUAccelerationLabel()
 
-	elif event == "car_accelerate":
-		window.UpdateCANUI()
-		can_app_manager.update_car_state(carState=CarStatus.ACCELERATE)
+    elif event == "car_accelerate":
+        window.UpdateCANUI()
+        can_app_manager.update_car_state(carState=CarStatus.ACCELERATE)
 
-	elif event == "car_brake":
-		window.UpdateCANUI()
-		can_app_manager.update_car_state(carState=CarStatus.BRAKE)
+    elif event == "car_brake":
+        window.UpdateCANUI()
+        can_app_manager.update_car_state(carState=CarStatus.BRAKE)
 
-	elif event == "car_idle":
-		window.UpdateCANUI()
-		can_app_manager.update_car_state(carState=CarStatus.IDLE)
+    elif event == "car_idle":
+        window.UpdateCANUI()
+        can_app_manager.update_car_state(CarStatus.IDLE)
 
-	camera.SwitchDemo(globalCurrentDemo)
+    camera.SwitchDemo(globalCurrentDemo)
 
-
-'''
-----------------------------------------------------
-Web Server 
-----------------------------------------------------
-'''
+# ---------------- Web Server ----------------
 app = Microdot()
 
 @app.route('/video_feed')
@@ -302,28 +259,19 @@ def index(request):
     else:
         return send_file(GetFileFullPath('web/index.html'))
 
+# ---------------- Initialization ----------------
 camera = cameraSupport(HardwareSupport, frameCallback)
-
 window = localWindow(screenClickCallback)
 
-# IoTConnect: connect + command wiring
+# IOTCONNECT: connect + command wiring
 init_webui_iotc()
-print(f"[BOOT] IoTConnect connected: {iotc_is_connected()}", flush=True)
+print(f"[BOOT] IoTConnect connected: {iotc_is_connected()} (PID={os.getpid()})", flush=True)
 
-# Fitness reset command
 register_fitness_reset(lambda: camera.ResetFitnessApp())
 
-# ---- Read speed & distance from the same state the UI uses ----
-_SPEED_KEYS = [
-    "current_speed_kph", "speed_kph", "speed_kmh", "speed",
-    "vehicle_speed", "car_speed", "v_speed", "kmh", "kph", "mph"
-]
-_TRIP_KEYS = [
-    "trip_km", "distance_km", "odometer_km", "trip", "distance",
-    "odometer", "km_travel", "km_travelled", "km_traveled",
-    "mileage", "miles", "mi"
-]
-
+# ---- CAN helpers ----
+_SPEED_KEYS = ["current_speed_kph","speed_kph","speed_kmh","speed","vehicle_speed","car_speed","v_speed","kmh","kph","mph"]
+_TRIP_KEYS = ["trip_km","distance_km","odometer_km","trip","distance","odometer","km_travel","km_travelled","km_traveled","mileage","miles","mi"]
 def _num(v) -> float | None:
     try:
         if isinstance(v, numbers.Number):
@@ -333,24 +281,17 @@ def _num(v) -> float | None:
     except Exception:
         return None
     return None
-
 def _maybe_convert_speed(name: str, val: float) -> float:
-    # If the attribute suggests MPH, convert to KPH
     n = name.lower()
     if "mph" in n:
         return val * 1.60934
-    return val  # assume km/h for 'kph', 'kmh', or generic names
-
+    return val
 def _maybe_convert_distance(name: str, val: float) -> float:
-    # If the attribute suggests miles, convert to km
     n = name.lower()
-    if any(k in n for k in ["mile", "miles", "mi"]) and not any(k in n for k in ["km"]):
+    if any(k in n for k in ["mile","miles","mi"]) and not any(k in n for k in ["km"]):
         return val * 1.60934
     return val
-
-def _pick_best_match(obj, keys) -> tuple[str | None, float | None]:
-    """Find the best numeric attribute/method result on obj matching any `keys`."""
-    # 1) Attributes
+def _pick_best_match(obj, keys):
     for attr in dir(obj):
         low = attr.lower()
         if any(k in low for k in keys):
@@ -361,7 +302,6 @@ def _pick_best_match(obj, keys) -> tuple[str | None, float | None]:
                     return attr, v
             except Exception:
                 pass
-    # 2) Zero-arg methods
     for attr in dir(obj):
         low = attr.lower()
         if any(k in low for k in keys):
@@ -370,18 +310,15 @@ def _pick_best_match(obj, keys) -> tuple[str | None, float | None]:
                 if callable(fn):
                     v = _num(fn())
                     if v is not None:
-                        return attr + "()", v
+                        return attr+"()", v
             except Exception:
                 pass
     return None, None
-
-def _scan_nested(obj, keys) -> tuple[str | None, float | None]:
-    """Scan obj and one level of nested objects for key matches."""
+def _scan_nested(obj, keys):
     name, val = _pick_best_match(obj, keys)
     if val is not None:
         return name, val
-    # One level deeper (common holders: car/state/vehicle)
-    for child_name in ("car", "vehicle", "state", "status", "model"):
+    for child_name in ("car","vehicle","state","status","model"):
         if hasattr(obj, child_name):
             child = getattr(obj, child_name)
             try:
@@ -391,68 +328,36 @@ def _scan_nested(obj, keys) -> tuple[str | None, float | None]:
             except Exception:
                 pass
     return None, None
-
-def _read_display_can_values() -> tuple[float | None, float | None]:
-    """
-    Returns (speed_kph, trip_km) using whatever the display uses.
-    If a value isn't found, returns None for that element.
-    """
-    # SPEED
+def _read_display_can_values():
     s_name, s_val = _scan_nested(can_app_manager, _SPEED_KEYS)
-    speed = None
-    if s_val is not None and s_name is not None:
-        speed = _maybe_convert_speed(s_name, s_val)
-
-    # DISTANCE/TRIP
+    speed = _maybe_convert_speed(s_name, s_val) if (s_val is not None and s_name) else None
     d_name, d_val = _scan_nested(can_app_manager, _TRIP_KEYS)
-    trip = None
-    if d_val is not None and d_name is not None:
-        trip = _maybe_convert_distance(d_name, d_val)
-
-    # Optional: one-time hint if not found
-    if speed is None or trip is None:
-        try:
-            print("[CAN] Debug keys (once):",
-                  [a for a in dir(can_app_manager) if any(k in a.lower() for k in ["speed","trip","distance","odo","mile","km"])],
-                  flush=True)
-        except Exception:
-            pass
-
+    trip  = _maybe_convert_distance(d_name, d_val) if (d_val is not None and d_name) else None
     return speed, trip
 
-# CAN commands: hold action for sec, then back to IDLE
-def _hold_state_for(seconds, state: CarStatus):
-    def run():
-        try:
-            can_app_manager.update_car_state(state)
-            time.sleep(seconds)
-        finally:
-            can_app_manager.update_car_state(CarStatus.IDLE)
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-
-register_can_actions(
-    accelerate_cb=lambda sec: _hold_state_for(sec, CarStatus.ACCELERATE),
-    brake_cb=lambda sec: _hold_state_for(sec, CarStatus.BRAKE)
-)
-
-# Background CAN telemetry loop — sends exactly what the display uses, every 4s
 def _can_telemetry_loop():
     while True:
         if globalCurrentDemo == DEMO_CAN:
-            speed, trip = _read_display_can_values()
-            if speed is None and trip is None:
-                # Still send something so the cloud shows “alive”
-                update_can_values(0.0, None)  # falls back to bridge integration
-            else:
-                update_can_values(speed if speed is not None else 0.0, trip)
+            try:
+                speed, trip = _read_display_can_values()
+            except Exception:
+                speed, trip = 0.0, None
+            update_can_values(speed if speed is not None else 0.0, trip)
         time.sleep(_CAN_INTERVAL)
 
+def _telemetry_heartbeat():
+    while True:
+        try:
+            update_fitness("heartbeat", 0, 0.0, None)
+        except Exception as e:
+            print("[HB] error:", e, flush=True)
+        time.sleep(5)
+
 threading.Thread(target=_can_telemetry_loop, daemon=True).start()
+threading.Thread(target=_telemetry_heartbeat, daemon=True).start()
 
-# Run app
+# Run app (debug disabled to avoid reloader)
 print("[BOOT] Camera opening and Microdot starting...", flush=True)
-app = Microdot()
-app.run(debug=True)
-
+DEBUG = bool(int(os.getenv("MICRODOT_DEBUG", "0")))
+app.run(host='0.0.0.0', port=int(os.getenv("WEBUI_PORT", "5000")), debug=DEBUG)
 camera.close()

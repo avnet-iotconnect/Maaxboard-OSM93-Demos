@@ -18,7 +18,7 @@ CPU_MODELS = {
 '''
 08/27/2024
 NPU models have been updated to support A1 Silicon
-Previous A0 silicon did not require setting Ethos-U delegate to invoke the NPU. Appears that is required now. 
+Previous A0 silicon did not require setting Ethos-U delegate to invoke the NPU. Appears that is required now.
 '''
 
 NPU_MODELS = {

@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 class PostureDetector:
-    
+
     def __init__(self, model_path):
         self.interpreter = tf.lite.Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
@@ -21,7 +21,7 @@ class PostureDetector:
 
         Args:
         input_image: A [1, height, width, 3] tensor represents the input image
-            pixels. Note that the height/width should already be resized and match the  
+            pixels. Note that the height/width should already be resized and match the
             expected input resolution of the model before passing into this function.
 
         Returns:
@@ -34,7 +34,7 @@ class PostureDetector:
 
         # working solution:
         # 1.) grab expected input tensor dimensions for image
-        # 2.) pre-process & resize the image with cv2 
+        # 2.) pre-process & resize the image with cv2
         # 3.) expand dimensions of the input_image array data to match tensor requirements
         dims = (self.input_shape[0], self.input_shape[1])
         input_image = cv2.resize(input_image, dims)
@@ -44,12 +44,12 @@ class PostureDetector:
         input_details = self.interpreter.get_input_details()
         output_details = self.interpreter.get_output_details()
         self.interpreter.set_tensor(input_details[0]['index'], input_image)
-        # Invoke inference. 
+        # Invoke inference.
         self.interpreter.invoke()
         # Get the model prediction.
         keypoints_with_scores = self.interpreter.get_tensor(output_details[0]['index'])
         return keypoints_with_scores
-    
+
 
 
 
